@@ -1,0 +1,15 @@
+{
+  "name": "tehnoland-pres",
+  "version": "1.014",
+  "description": "Tehnoland Impulse Platform 3D",
+  "scripts": {
+    "merge": "node scripts/merge.js",
+    "start": "npx live-server public --port=3000 --open",
+    "build": "npm run merge",
+    "build:prod": "npm run merge && node scripts/prepare-deploy.js && cd project && npm install && npm run build"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.6.3",
+    "live-server": "^1.2.2"
+  }
+}

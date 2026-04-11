@@ -1,0 +1,1940 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Технолэнд</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600&family=Inter:wght@300;400;600&family=Orbitron:wght@500;700;900&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        .sim-screen {
+            animation: screen-turn-on 0.6s cubic-bezier(0.23, 1, 0.32, 1) both;
+            position: relative;
+        }
+
+        @keyframes screen-turn-on {
+            0% {
+                transform: scale(1.02) scaleY(0.01);
+                filter: brightness(3) contrast(2);
+                opacity: 0
+            }
+
+            50% {
+                transform: scale(1.01) scaleY(1);
+                filter: brightness(1.5) contrast(1.2);
+                opacity: 1
+            }
+
+            100% {
+                transform: scale(1) scaleY(1);
+                filter: brightness(1) contrast(1);
+                opacity: 1
+            }
+        }
+
+        @keyframes flash-warning {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: 0.3
+            }
+        }
+
+        @keyframes panic-timer {
+            from {
+                width: 100%;
+            }
+
+            to {
+                width: 0%;
+            }
+        }
+
+        @keyframes fade-in {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        @keyframes loading-bar {
+            0% {
+                transform: translateX(-100%);
+            }
+
+            100% {
+                transform: translateX(100%);
+            }
+        }
+
+        /* Custom Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 243, 255, 0.15);
+            border-radius: 10px;
+            border: 1px solid rgba(0, 243, 255, 0.05);
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 243, 255, 0.4);
+            box-shadow: 0 0 10px rgba(0, 243, 255, 0.2);
+        }
+
+        * {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(0, 243, 255, 0.2) rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef, createContext, useContext, useMemo, Fragment } = React;
+
+        class ProceduralAudio {
+            constructor() {
+                this.ctx = null;
+                this.isInitialized = false;
+                this.currentBgm = null;
+                this.currentType = null;
+                this.pendingBGM = null;
+                
+                const init = () => {
+                    if(!this.ctx) {
+                        const AudioContext = window.AudioContext || window.webkitAudioContext;
+                        if(AudioContext) {
+                            this.ctx = new AudioContext();
+                            this.isInitialized = true;
+                            if (this.pendingBGM) {
+                                const t = this.pendingBGM;
+                                this.currentType = null;
+                                this.setBGM(t);
+                            }
+                        }
+                    } else if(this.ctx.state === 'suspended') {
+                        this.ctx.resume();
+                    }
+                };
+                
+                document.addEventListener('click', init, { once: true });
+                document.addEventListener('keydown', init, { once: true });
+
+                document.addEventListener('mousedown', (e) => {
+                    const tag = e.target.tagName.toLowerCase();
+                    const cursor = window.getComputedStyle(e.target).cursor;
+                    if(tag === 'button' || tag === 'a' || cursor === 'pointer' || e.target.closest('button')) {
+                        this.playClick();
+                    }
+                });
+            }
+
+            playTextBlip() {
+                if(!this.isInitialized || this.ctx.state !== 'running') return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(800 + Math.random()*500, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(200, this.ctx.currentTime + 0.03);
+                
+                gain.gain.setValueAtTime(0.015, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.03);
+                
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.03);
+            }
+
+            playClick() {
+                if(!this.isInitialized || this.ctx.state !== 'running') return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(600, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.05);
+                
+                gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.05);
+                
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.05);
+            }
+
+            setBGM(type) {
+                if(this.currentType === type) return;
+                this.currentType = type;
+                this.pendingBGM = type;
+                
+                if(!this.isInitialized) return; 
+
+                if (this.bgmAudio) {
+                    this.bgmAudio.pause();
+                    this.bgmAudio.src = '';
+                    this.bgmAudio = null;
+                }
+
+                if (type === 'lore') {
+                    this.bgmAudio = new Audio('/music/Ganga_Through_the_Machine.mp3');
+                    this.bgmAudio.loop = true;
+                    this.bgmAudio.volume = 0.5;
+                    this.bgmAudio.play().catch(e => console.error('Audio play error:', e));
+                } else if (type === 'game') {
+                    this.bgmAudio = new Audio('/music/Cold_Iron_Prayer.mp3');
+                    this.bgmAudio.loop = true;
+                    this.bgmAudio.volume = 0.4;
+                    this.bgmAudio.play().catch(e => console.error('Audio play error:', e));
+                }
+            }
+
+            stopBGM() {
+                this.setBGM(null);
+            }
+        }
+
+        window.audioManager = new ProceduralAudio();
+        const ARM_POINTS = { home: { x: 0.18, y: 0.0, z: 0.18 }, pick: { x: -0.18, y: 0.12, z: 0.05 }, place: { x: 0.18, y: -0.12, z: 0.06 } };
+        const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+
+        const solveInverseKinematics = (target, metrics) => {
+            const baseHeight = 0.08, l1 = 0.18, l2 = 0.17, reachLimit = metrics?.reachRadius || 0.34;
+            const x = target.x, y = target.y, z = clamp(target.z, 0.01, 0.28);
+            const base = Math.atan2(y, x);
+            const r = clamp(Math.sqrt(x * x + y * y), 0.02, reachLimit);
+            const vertical = z - baseHeight;
+            const dist = clamp(Math.sqrt(r * r + vertical * vertical), 0.04, l1 + l2 - 0.0001);
+            const elbow = Math.acos(clamp((l1 * l1 + l2 * l2 - dist * dist) / (2 * l1 * l2), -1, 1));
+            const shoulderOffset = Math.atan2(vertical, r);
+            const shoulderInner = Math.acos(clamp((l1 * l1 + dist * dist - l2 * l2) / (2 * l1 * dist), -1, 1));
+            const shoulder = shoulderOffset + shoulderInner;
+            const elbowPoint = { x: Math.cos(base) * Math.cos(shoulder) * l1, y: Math.sin(base) * Math.cos(shoulder) * l1, z: baseHeight + Math.sin(shoulder) * l1 };
+            return { base, shoulder, elbow: Math.PI - elbow, joints: [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: baseHeight }, elbowPoint, { x, y, z }] };
+        };
+
+        const ROLE_INFO = { proto: { title: 'КОНСТРУКТИУС', mascot: 'proto' }, model: { title: 'ЭКОНОМИКУС', mascot: 'model' }, code: { title: 'КОДИУС', mascot: 'code' } };
+
+        const GameContext = createContext();
+
+        const GameProvider = ({ children }) => {
+            const [userRole, setUserRole] = useState(null);
+            const [scoreTotal, setScoreTotal] = useState(0);
+            const [currentScreen, setCurrentScreen] = useState('quiz');
+            const [teamState, setTeamState] = useState({ prototyping: { progress: 0, status: 'playing' }, modeling: { progress: 0, status: 'playing' }, coding: { progress: 0, status: 'playing' } });
+            const [simulationData, setSimulationData] = useState({
+                scenario: {
+                    title: 'RobodexBRICS', region: 'Индия, Бангалор', product: 'Робо-рука 0.42 кг', blockWeight: 0.42, dailyDemand: 640, grantCap: 420, competitorPrice: 780,
+                    targets: {
+                        budget: 420,
+                        reliability: 75,
+                        cycleTime: 8.0,
+                        payload: 0.42
+                    },
+                    mission: {
+                        context: 'Индия, 2026. Логистический хаб в Бангалоре обрабатывает 640 грузов в день вручную. Требуется заменить ручной труд роботом-манипулятором.',
+                        goal: 'Спроектировать, обосновать экономически и запрограммировать 3-осевой манипулятор, способный перекладывать коробки весом 0.42 кг с точностью ≥75%.',
+                        budget: 'Грант: $420. Вся сборка (BOM) должна уложиться в эту сумму.',
+                        roles: {
+                            proto: { title: 'КОНСТРУКТИУС — Надёжность', focus: 'Соберите рабочую конфигурацию', detail: 'Подберите контроллер, приводы, захват и датчики. Следите за энергопотреблением и надёжностью каждого компонента. За бюджетом следит экономист.', target: 'Надёжность ≥75%, без мех. рисков и перегрузок питания' },
+                            model: { title: 'ЭКОНОМИКУС — Экономика', focus: 'Следите за ценовыми показателями', detail: 'Контролируйте бюджет гранта $420. Рассчитайте окупаемость — проект должен окупиться ≤24 мес.', target: 'BOM ≤ $420, Payback ≤ 24 мес.' },
+                            code: { title: 'КОДИУС — Точность', focus: 'Следите за шумом датчиков', detail: 'Шумные датчики = нестабильная работа. Добавьте фильтр Калмана или утяжелите код для компенсации. Но тяжёлый код = медленный цикл.', target: 'Цикл проходит без ошибок, шум отфильтрован' }
+                        },
+                        victory: 'Все 3 модуля завершены + композитный скор ≥ 40/100'
+                    }
+                },
+                hardware: { controller: 'esp32_devkit', shoulderActuator: 'mg995', elbowActuator: 'mg995', wristActuator: 'mg996r', gripper: 'parallel_gripper_2f', visionSensor: 'ov2640_cam', forceSensor: 'hx711_loadcell', frameMaterial: 'plastic' },
+                bom: [],
+                totals: { bomCost: 0, powerWatts: 0, peakCurrent: 0, currentLimit: 5, powerSupplyOverload: false, structuralWeight: 0, payloadCapacity: 0, totalLoad: 0, centerOfMassOffset: 0, comRisk: false, armSpeedFactor: 1, estimatedCycleSeconds: 7.5, reachRadius: 0.34, sensorNoise: 0.04, reliabilityScore: 82, mechanicalRisk: false, requiredPorts: { pwm: 0, analog: 0, digital: 0, uart: 0, i2c: 0 }, controllerPorts: { pwm: 0, analog: 0, digital: 0, uart: 0, i2c: 0 }, controllerPortsOk: true, warnings: [], alerts: [] },
+                business: { laborCostMonthly: 420, operatorsCount: 2, robotPrice: 0, serviceMonthly: 28, manualOutputPerMonth: 6400, robotOutputPerMonth: 14080, grantCap: 420, competitorPrice: 780, roiMonths: null, monthlyProfit: 0 },
+                software: { nodes: [], validation: 'Не пройдена', reliabilityBonus: 1, sensorFilterWindow: 1, lastRun: null, cyclesPerHour: 0, reachZoneRadius: 0.34, filterType: 'none', variables: {} },
+                economics: { hardwareLimit: 300, softwareLimit: 120, activeKpi: null, kpiBonus: 0, tco: { wear: 0, opex: 0 }, activeGrants: [], purchasedLibraries: [] },
+                marketState: {
+                    indices: { tech: 1.0, energy: 1.0, logistics: 1.0 },
+                    history: { tech: [1, 1, 1, 1, 1], energy: [1, 1, 1, 1, 1], logistics: [1, 1, 1, 1, 1] },
+                    investments: { tech: 0, energy: 0, logistics: 0 },
+                    upgrades: [],
+                    creditScore: 70,
+                    activeAlert: null,
+                    nextUpdate: Date.now() + 45000
+                },
+                collaboration: { syncMode: 'LocalStorage', messages: [], maskotAlerts: [], panicActive: false, panicEndTime: 0 },
+                purchasedSamples: [],
+                pitchOutcome: { completed: false, bonus: 0 },
+                startTime: Date.now()
+            });
+
+            useEffect(() => {
+                try {
+                    const saved = localStorage.getItem('tehnoland_sim_state');
+                    if (saved) {
+                        const p = JSON.parse(saved);
+                        if (p.simulationData) setSimulationData(p.simulationData);
+                        if (p.teamState) setTeamState(p.teamState);
+                    }
+                } catch (e) {
+                    console.warn('Failed to load state from localStorage:', e);
+                }
+                
+                const handler = (e) => {
+                    if (e.key === 'tehnoland_sim_state' && e.newValue) {
+                        try {
+                            const p = JSON.parse(e.newValue);
+                            if (p.simulationData) setSimulationData(p.simulationData);
+                            if (p.teamState) setTeamState(p.teamState);
+                        } catch (ex) {
+                            console.warn('Failed to sync state:', ex);
+                        }
+                    }
+                };
+                window.addEventListener('storage', handler);
+                
+                if (window.audioManager) {
+                    window.audioManager.setBGM('game');
+                }
+                
+                return () => {
+                    window.removeEventListener('storage', handler);
+                    if (window.audioManager) window.audioManager.stopBGM();
+                };
+            }, []);
+
+            useEffect(() => {
+                try {
+                    const t = setTimeout(() => {
+                        localStorage.setItem('tehnoland_sim_state', JSON.stringify({ simulationData, teamState }));
+                    }, 100);
+                    return () => clearTimeout(t);
+                } catch (e) {
+                    console.warn('Failed to save state:', e);
+                }
+            }, [simulationData, teamState]);
+
+            const handleRoleSelect = (role) => {
+                // Запускаем таймер при первом выборе роли
+                if (!simulationData.collaboration?.competitionStartTime) {
+                    setSimulationData(prev => ({
+                        ...prev,
+                        collaboration: {
+                            ...prev.collaboration,
+                            competitionStartTime: Date.now()
+                        }
+                    }));
+                }
+                setUserRole(role);
+                setCurrentScreen(role === 'proto' ? 'prototyping' : role === 'model' ? 'modeling' : 'coding');
+            };
+
+            const sendChatMessage = (text, senderName = null) => {
+                const message = {
+                    id: Date.now() + Math.random(),
+                    text: text.trim(),
+                    sender: senderName || userRole || 'Аноним',
+                    timestamp: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+                    role: userRole || 'unknown'
+                };
+                
+                setSimulationData(prev => ({
+                    ...prev,
+                    collaboration: {
+                        ...prev.collaboration,
+                        messages: [...(prev.collaboration?.messages || []), message].slice(-50)
+                    }
+                }));
+            };
+
+            return <GameContext.Provider value={{ userRole, setUserRole, scoreTotal, setScoreTotal, currentScreen, setCurrentScreen, teamState, setTeamState, simulationData, setSimulationData, sendChatMessage, handleRoleSelect }}>{children}</GameContext.Provider>;
+        };
+
+        const useTeamSimulation = (tableName) => {
+            const { teamState, setTeamState, simulationData } = useContext(GameContext);
+            const [localElapsed, setLocalElapsed] = useState(0);
+            useEffect(() => { const t = setInterval(() => setLocalElapsed(Math.floor((Date.now() - (simulationData.collaboration?.competitionStartTime || Date.now())) / 1000)), 1000); return () => clearInterval(t); }, [simulationData.collaboration?.competitionStartTime]);
+            return { localElapsed, setPlayerProgress: (pct) => setTeamState(prev => ({ ...prev, [tableName]: { progress: pct, status: pct >= 100 ? 'done' : 'playing' } })) };
+        };
+
+
+
+        const ChatPanel = ({ variant = 'default' }) => {
+            const { simulationData, sendChatMessage, userRole } = useContext(GameContext);
+            const [inputValue, setInputValue] = useState('');
+            const [lastMessageCount, setLastMessageCount] = useState(0);
+            const [hasNewNotification, setHasNewNotification] = useState(false);
+            const [lastMessageRole, setLastMessageRole] = useState(null);
+            const chatEndRef = useRef(null);
+            const inputRef = useRef(null);
+            const audioContextRef = useRef(null);
+
+            const messages = simulationData.collaboration?.messages || [];
+
+            const playNotificationSound = () => {
+                try {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioCtx) return;
+                    
+                    if (!audioContextRef.current) {
+                        audioContextRef.current = new AudioCtx();
+                    }
+                    
+                    const ctx = audioContextRef.current;
+                    
+                    if (ctx.state === 'suspended') {
+                        ctx.resume().catch(() => {});
+                    }
+                    
+                    const oscillator = ctx.createOscillator();
+                    const gainNode = ctx.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(ctx.destination);
+                    
+                    oscillator.frequency.setValueAtTime(800, ctx.currentTime);
+                    oscillator.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.1);
+                    
+                    gainNode.gain.setValueAtTime(0.15, ctx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+                    
+                    oscillator.start(ctx.currentTime);
+                    oscillator.stop(ctx.currentTime + 0.15);
+                } catch (e) {
+                    // Audio not available, ignore
+                }
+            };
+
+            useEffect(() => {
+                if (messages.length > lastMessageCount && lastMessageCount > 0) {
+                    const lastMsg = messages[messages.length - 1];
+                    const isFromOthers = lastMsg.role !== userRole;
+                    
+                    if (isFromOthers) {
+                        setHasNewNotification(true);
+                        setLastMessageRole(lastMsg.role);
+                        playNotificationSound();
+                        
+                        const timer = setTimeout(() => {
+                            setHasNewNotification(false);
+                            setLastMessageRole(null);
+                        }, 3000);
+                        return () => clearTimeout(timer);
+                    }
+                }
+                setLastMessageCount(messages.length);
+            }, [messages.length, userRole]);
+
+            useEffect(() => {
+                chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }, [messages]);
+
+            const handleSubmit = (e) => {
+                e?.preventDefault();
+                if (!inputValue.trim()) return;
+                
+                const roleNames = { proto: 'КОНСТРУКТОР', model: 'ЭКОНОМИСТ', code: 'ПРОГРАММИСТ' };
+                const senderName = roleNames[userRole] || userRole || 'УЧАСТНИК';
+                
+                sendChatMessage(inputValue, senderName);
+                setInputValue('');
+                setHasNewNotification(false);
+            };
+
+            const handleKeyDown = (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit();
+                }
+            };
+
+            const getRoleColor = (role) => {
+                const colors = { proto: '#ffb36b', model: '#7de8ff', code: '#c58fff' };
+                return colors[role] || '#fff';
+            };
+
+            const voiceStatus = 'VOICE ACTIVE';
+            const lagMs = (Math.random() * 50 + 10).toFixed(0);
+
+            const sizeStyles = {
+                compact: { minHeight: '260px', padding: '12px 14px', fontSize: '11px' },
+                default: { minHeight: '260px', padding: '12px 16px', fontSize: '11px' },
+                large: { minHeight: '300px', padding: '16px', fontSize: '12px' }
+            };
+            const sizes = sizeStyles[variant] || sizeStyles.default;
+
+            return (
+                <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    background: 'rgba(0,0,0,0.1)',
+                    border: hasNewNotification ? '1px solid rgba(0, 243, 255, 0.5)' : '1px solid var(--prof-border)',
+                    overflow: 'hidden',
+                    height: variant === 'compact' ? '280px' : variant === 'large' ? '340px' : '300px',
+                    borderRadius: '6px',
+                    boxShadow: hasNewNotification ? '0 0 20px rgba(0, 243, 255, 0.2)' : 'none',
+                    transition: 'all 0.3s ease'
+                }}>
+                    <style>{`
+                        @keyframes pulse { 0%, 100% { opacity: 0.3; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.05); } }
+                        @keyframes notification-glow { 0%, 100% { box-shadow: 0 0 10px rgba(0, 243, 255, 0.3); } 50% { box-shadow: 0 0 25px rgba(0, 243, 255, 0.6); } }
+                        .chat-input-focus:focus { outline: none; border-color: rgba(0, 243, 255, 0.5) !important; box-shadow: 0 0 10px rgba(0, 243, 255, 0.2); }
+                    `}</style>
+
+                    {/* Header */}
+                    <div style={{
+                        padding: '10px 16px',
+                        background: 'rgba(255,255,255,0.02)',
+                        borderBottom: '1px solid rgba(255,255,255,0.05)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                    }}>
+                        <div style={{ fontSize: '10px', fontWeight: '800', color: 'var(--prof-accent)', letterSpacing: '1px' }}>
+                            КОМАНДНЫЙ ЦЕНТР{hasNewNotification && ' 🔔'}
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            {hasNewNotification && lastMessageRole && (
+                                <div style={{
+                                    fontSize: '9px',
+                                    color: getRoleColor(lastMessageRole),
+                                    fontWeight: '900',
+                                    animation: 'notification-glow 1.5s infinite',
+                                    padding: '2px 8px',
+                                    borderRadius: '3px',
+                                    background: `${getRoleColor(lastMessageRole)}15`,
+                                    border: `1px solid ${getRoleColor(lastMessageRole)}40`
+                                }}>
+                                    НОВОЕ СООБЩЕНИЕ
+                                </div>
+                            )}
+                            {messages.length > 0 && !hasNewNotification && (
+                                <div style={{
+                                    width: '18px', height: '18px', borderRadius: '50%',
+                                    background: 'rgba(0, 243, 255, 0.2)',
+                                    border: '1px solid rgba(0, 243, 255, 0.4)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    fontSize: '9px', color: 'var(--neon-blue)', fontWeight: '900'
+                                }}>
+                                    {messages.length > 9 ? '9+' : messages.length}
+                                </div>
+                            )}
+                            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--prof-success)', boxShadow: '0 0 8px var(--prof-success)' }} />
+                        </div>
+                    </div>
+
+                    {/* Voice Chat Indicator */}
+                    <div style={{
+                        padding: `${parseInt(sizes.padding) - 2}px 16px`,
+                        display: 'flex', gap: '12px',
+                        borderBottom: '1px solid rgba(255,255,255,0.03)',
+                        alignItems: 'center'
+                    }}>
+                        <div style={{ position: 'relative' }}>
+                            <div style={{
+                                width: variant === 'large' ? '42px' : '36px',
+                                height: variant === 'large' ? '42px' : '36px',
+                                borderRadius: '50%',
+                                background: 'var(--prof-border)',
+                                border: '2px solid var(--prof-success)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: variant === 'large' ? '20px' : '16px'
+                            }}>
+                                👤
+                            </div>
+                            <div style={{
+                                position: 'absolute', inset: -3, borderRadius: '50%',
+                                border: '2px solid var(--prof-success)', opacity: 0.3,
+                                animation: 'pulse 2s infinite'
+                            }} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                                <span style={{ fontSize: '9px', color: 'var(--prof-success)', fontWeight: '900' }}>{voiceStatus}</span>
+                                <span style={{ fontSize: '9px', color: 'var(--prof-text-dim)', fontFamily: 'IBM Plex Mono' }}>{lagMs}ms LAG</span>
+                            </div>
+                            <div style={{ height: '2px', background: 'rgba(255,255,255,0.05)', borderRadius: '1px', overflow: 'hidden' }}>
+                                <div style={{ height: '100%', width: '65%', background: 'var(--prof-success)', opacity: 0.7 }} />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Messages List */}
+                    <div className="no-scrollbar" style={{
+                        flex: 1,
+                        minHeight: 0,
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
+                        padding: sizes.padding,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: variant === 'large' ? '14px' : '10px'
+                    }}>
+                        {messages.length === 0 && (
+                            <div style={{
+                                fontSize: sizes.fontSize,
+                                color: 'var(--prof-text-dim)',
+                                fontStyle: 'italic',
+                                textAlign: 'center',
+                                padding: '20px 0'
+                            }}>
+                                📡 Канал связи ожидает сообщений...
+                            </div>
+                        )}
+                        {messages.map((msg) => (
+                            <div key={msg.id} style={{ fontSize: sizes.fontSize, lineHeight: '1.4' }}>
+                                <span style={{ color: getRoleColor(msg.role), fontWeight: '900', marginRight: '6px' }}>
+                                    {msg.sender}:
+                                </span>
+                                <span style={{ color: 'var(--prof-text-main)' }}>{msg.text}</span>
+                                <span style={{ color: 'var(--prof-text-dim)', fontSize: '9px', marginLeft: '8px', opacity: 0.6 }}>
+                                    {msg.timestamp}
+                                </span>
+                            </div>
+                        ))}
+                        <div ref={chatEndRef} />
+                    </div>
+
+                    {/* Input Field */}
+                    <div style={{
+                        padding: variant === 'large' ? '12px' : '10px',
+                        borderTop: '1px solid rgba(255,255,255,0.05)',
+                        background: 'rgba(0,0,0,0.1)'
+                    }}>
+                        <div style={{
+                            background: 'rgba(255,255,255,0.03)',
+                            border: '1px solid var(--prof-border)',
+                            borderRadius: '4px',
+                            padding: '10px 12px',
+                            fontSize: sizes.fontSize,
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            transition: 'all 0.2s'
+                        }}>
+                            <input
+                                ref={inputRef}
+                                type="text"
+                                value={inputValue}
+                                onChange={(e) => setInputValue(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                placeholder="Написать сообщение..."
+                                className="chat-input-focus"
+                                style={{
+                                    background: 'transparent',
+                                    border: 'none',
+                                    outline: 'none',
+                                    color: 'var(--prof-text-main)',
+                                    fontSize: 'inherit',
+                                    flex: 1,
+                                    fontFamily: 'inherit'
+                                }}
+                            />
+                            <button
+                                onClick={handleSubmit}
+                                disabled={!inputValue.trim()}
+                                style={{
+                                    background: inputValue.trim() ? 'rgba(0, 243, 255, 0.2)' : 'transparent',
+                                    border: 'none',
+                                    color: inputValue.trim() ? 'var(--neon-blue)' : 'var(--prof-text-dim)',
+                                    opacity: inputValue.trim() ? 1 : 0.3,
+                                    fontSize: '14px',
+                                    cursor: inputValue.trim() ? 'pointer' : 'default',
+                                    transition: 'all 0.2s',
+                                    padding: '4px 8px',
+                                    borderRadius: '3px'
+                                }}
+                            >
+                                ⏎
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+
+        const TeamProgressIndicator = ({ localElapsed }) => {
+            const { teamState, currentScreen, setCurrentScreen, simulationData, userRole, setUserRole } = useContext(GameContext);
+
+            // Скрываем индикатор на хабе и финальном экране
+            if (currentScreen === 'hub' || currentScreen === 'final') {
+                return null;
+            }
+
+            const roleMapping = {
+                prototyping: { name: 'ПРОТО', icon: '🏗️', color: '#ffb36b', role: 'proto' },
+                modeling: { name: 'БИЗНЕС', icon: '📈', color: '#7de8ff', role: 'model' },
+                coding: { name: 'КОД', icon: '⚡', color: '#c58fff', role: 'code' }
+            };
+
+            const RoleButton = ({ screenName, config, isActive }) => {
+                const status = teamState[screenName]?.status || 'playing';
+                const isDone = status === 'done';
+                
+                const handleClick = () => {
+                    setCurrentScreen(screenName);
+                    if (config?.role) setUserRole(config.role);
+                };
+
+                return (
+                    <button
+                        onClick={handleClick}
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '8px 16px',
+                            borderRadius: '4px',
+                            background: isActive ? 'rgba(0, 243, 255, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                            border: isActive ? `2px solid ${config.color}` : `1px solid ${isDone ? config.color + '40' : 'rgba(255, 255, 255, 0.1)'}`,
+                            boxShadow: isActive ? `0 0 15px ${config.color}30` : 'none',
+                            transition: 'all 0.2s',
+                            cursor: 'pointer',
+                            fontFamily: 'inherit',
+                            color: isActive ? config.color : '#fff',
+                            opacity: isActive ? 1 : 0.7,
+                            minWidth: '120px',
+                            justifyContent: 'center'
+                        }}
+                        onMouseEnter={e => {
+                            if (!isActive) {
+                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                                e.currentTarget.style.opacity = '1';
+                            }
+                        }}
+                        onMouseLeave={e => {
+                            if (!isActive) {
+                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
+                                e.currentTarget.style.opacity = '0.7';
+                            }
+                        }}
+                    >
+                        <span style={{ fontSize: '16px', filter: isDone ? 'none' : 'grayscale(0.3)' }}>{config.icon}</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                            <span style={{
+                                fontWeight: '900',
+                                textTransform: 'uppercase',
+                                letterSpacing: '1px',
+                                fontSize: '10px',
+                                color: isActive ? config.color : '#fff'
+                            }}>{config.name}</span>
+                            {isDone && (
+                                <span style={{
+                                    fontSize: '8px',
+                                    color: '#8cffb1',
+                                    fontWeight: '800',
+                                    marginTop: '-2px'
+                                }}>✓ ГОТОВО</span>
+                            )}
+                        </div>
+                        {!isActive && (
+                            <span style={{
+                                fontSize: '10px',
+                                opacity: 0.4,
+                                marginLeft: '4px'
+                            }}>→</span>
+                        )}
+                    </button>
+                );
+            };
+
+            const fmt = s => {
+                const m = Math.floor(s / 60);
+                return m + ':' + (s % 60).toString().padStart(2, '0');
+            };
+
+            const currentConfig = roleMapping[currentScreen];
+
+            return (
+                <Fragment>
+                    <div style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(200px, 1fr) auto minmax(200px, 1fr)',
+                        alignItems: 'center',
+                        backdropFilter: 'blur(20px)',
+                        background: 'rgba(6,11,19,0.95)',
+                        padding: '0 30px',
+                        borderBottom: '1px solid rgba(0,243,255,0.2)',
+                        zIndex: 10000,
+                        height: '64px',
+                        fontFamily: "'IBM Plex Mono', monospace",
+                        boxShadow: '0 4px 30px rgba(0,0,0,0.5)'
+                    }}>
+                        {/* LEFT: HUB BUTTON */}
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <button
+                                onClick={() => setCurrentScreen('hub')}
+                                style={{
+                                    background: 'rgba(14, 17, 32, 0.88)',
+                                    border: '1px solid rgba(249, 115, 22, 0.3)',
+                                    color: '#f97316',
+                                    padding: '8px 16px',
+                                    borderRadius: '6px',
+                                    fontSize: '11px',
+                                    fontWeight: '900',
+                                    letterSpacing: '1px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                    fontFamily: 'inherit',
+                                    boxShadow: 'inset 0 0 10px rgba(249, 115, 22, 0.05)'
+                                }}
+                                onMouseEnter={e => {
+                                    e.currentTarget.style.background = 'rgba(249, 115, 22, 0.15)';
+                                    e.currentTarget.style.borderColor = 'rgba(249, 115, 22, 0.8)';
+                                    e.currentTarget.style.boxShadow = '0 0 15px rgba(249, 115, 22, 0.3), inset 0 0 10px rgba(249, 115, 22, 0.1)';
+                                    e.currentTarget.style.color = '#fff';
+                                }}
+                                onMouseLeave={e => {
+                                    e.currentTarget.style.background = 'rgba(14, 17, 32, 0.88)';
+                                    e.currentTarget.style.borderColor = 'rgba(249, 115, 22, 0.3)';
+                                    e.currentTarget.style.boxShadow = 'inset 0 0 10px rgba(249, 115, 22, 0.05)';
+                                    e.currentTarget.style.color = '#f97316';
+                                }}
+                            >
+                                <span style={{ fontSize: '14px', filter: 'drop-shadow(0 0 5px rgba(249, 115, 22, 0.5))' }}>🏠</span> ВЕРНУТЬСЯ В ХАБ
+                            </button>
+                        </div>
+
+                        {/* CENTER: ROLE NAVIGATION BUTTONS */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <RoleButton screenName="prototyping" config={roleMapping.prototyping} isActive={currentScreen === 'prototyping'} />
+                            <RoleButton screenName="modeling" config={roleMapping.modeling} isActive={currentScreen === 'modeling'} />
+                            <RoleButton screenName="coding" config={roleMapping.coding} isActive={currentScreen === 'coding'} />
+                        </div>
+
+                        {/* RIGHT: TIMER */}
+                        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '15px', justifyContent: 'flex-end' }}>
+                            <div style={{ fontSize: '9px', color: 'rgba(125,232,255,0.4)', letterSpacing: '1.5px', fontWeight: '900', textAlign: 'right' }}>
+                                ВРЕМЯ<br />ОПЕРАЦИИ
+                            </div>
+                            <div style={{
+                                fontSize: '24px',
+                                color: '#7de8ff',
+                                fontFamily: "'Orbitron', sans-serif",
+                                fontWeight: 'bold',
+                                letterSpacing: '2px',
+                                background: 'rgba(0,0,0,0.3)',
+                                padding: '6px 18px',
+                                borderRadius: '4px',
+                                border: '1px solid rgba(125,232,255,0.15)',
+                                boxShadow: 'inset 0 0 10px rgba(0,243,255,0.05)',
+                                minWidth: '85px',
+                                textAlign: 'center'
+                            }}>
+                                {fmt(localElapsed || 0)}
+                            </div>
+                        </div>
+                    </div>
+                </Fragment>
+            );
+        };
+
+
+        const OperatorCard = ({ role, title, subtitle, color, isCompleted, onClick, matchScore, maxScore, isOptimal }) => {
+            const [tilt, setTilt] = useState({ x: 0, y: 0 });
+            const onMove = e => { const r = e.currentTarget.getBoundingClientRect(); setTilt({ x: ((e.clientX - r.left) / r.width - 0.5) * 12, y: -((e.clientY - r.top) / r.height - 0.5) * 12 }); };
+            return (
+                <div onMouseMove={onMove} onMouseLeave={() => setTilt({ x: 0, y: 0 })} onClick={onClick} style={{ perspective: '1000px', cursor: 'pointer', position: 'relative' }}>
+                    <div className="glass-panel" style={{
+                        transform: `rotateY(${tilt.x}deg) rotateX(${tilt.y}deg)`,
+                        transition: 'transform 0.3s ease',
+                        borderRadius: '16px',
+                        padding: '50px 30px',
+                        textAlign: 'center',
+                        position: 'relative',
+                        overflow: 'hidden',
+                        background: 'rgba(14,17,32,0.88)',
+                        borderColor: `${color}30`
+                    }}>
+                        <div className="corner-tl" />
+                        <div className="corner-tr" />
+                        <div className="corner-bl" />
+                        <div className="corner-br" />
+
+                        {isOptimal && (
+                            <div style={{ position: 'absolute', top: '20px', left: '50%', transform: 'translateX(-50%)', background: color, color: '#000', padding: '4px 12px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: '900', letterSpacing: '1px', boxShadow: `0 0 10px ${color}80` }}>ОПТИМАЛЬНО</div>
+                        )}
+
+                        {/* Icon */}
+                        <div style={{
+                            fontSize: '3rem',
+                            marginBottom: '16px',
+                            filter: `drop-shadow(0 0 10px ${color}40)`,
+                            animation: isCompleted ? 'none' : 'float 4s ease-in-out infinite'
+                        }}>
+                            {role === 'proto' ? '⚙️' : role === 'model' ? '📊' : '💻'}
+                        </div>
+
+                        <h3 style={{
+                            color,
+                            fontSize: '1.4rem',
+                            margin: '0 0 8px 0',
+                            fontWeight: '900',
+                            letterSpacing: '2px',
+                            textTransform: 'uppercase',
+                            textShadow: `0 0 20px ${color}40`
+                        }}>
+                            {title}
+                        </h3>
+                        {subtitle && (
+                            <div style={{
+                                color: 'rgba(148,163,184,0.7)',
+                                fontSize: '0.85rem',
+                                fontWeight: '500',
+                                letterSpacing: '1px',
+                                marginBottom: '16px'
+                            }}>
+                                {subtitle}
+                            </div>
+                        )}
+                        {matchScore !== undefined && (
+                            <>
+                                <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: '10px', height: '6px', overflow: 'hidden', margin: '25px 0 10px 0' }}>
+                                    <div style={{ height: '100%', width: (matchScore / maxScore * 100) + '%', background: color, borderRadius: '10px', boxShadow: `0 0 10px ${color}` }} />
+                                </div>
+                                <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)', fontWeight: 'bold' }}>{matchScore} / {maxScore} СОВПАДЕНИЕ</div>
+                            </>
+                        )}
+                        {isCompleted && (
+                            <div style={{
+                                marginTop: '12px',
+                                color: '#22c55e',
+                                fontSize: '11px',
+                                fontWeight: '800',
+                                letterSpacing: '2px',
+                                padding: '6px 16px',
+                                background: 'rgba(34,197,94,0.1)',
+                                border: '1px solid rgba(34,197,94,0.3)',
+                                borderRadius: '20px',
+                                display: 'inline-block'
+                            }}>
+                                ✓ ЗАВЕРШЕНО
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // ═══════════════════════════════════════════════════════
+        // ТЕСТ ОПРЕДЕЛЕНИЯ РОЛИ
+        // ═══════════════════════════════════════════════════════
+        const QUIZ_QUESTIONS = [
+            // Раздел 1: Менеджер (Экономика - по смыслу)
+            { section: 'manager', q: 'Деньги в детстве:', options: [
+                { text: 'Тратил сразу.', scores: { constructor: 0, manager: 0, programmer: 0 } },
+                { text: 'Складывал в копилку.', scores: { constructor: 0, manager: 1, programmer: 0 } },
+                { text: 'Менялся на игрушки с наваром.', scores: { constructor: 0, manager: 2, programmer: 0 } },
+            ]},
+            { section: 'manager', q: 'Игра любимая:', options: [
+                { text: 'Шутеры (CS, Warzone) или гонки (Asphalt).', scores: { constructor: 0, manager: 0, programmer: 0 } },
+                { text: 'Симуляторы жизни (The Sims).', scores: { constructor: 0, manager: 1, programmer: 0 } },
+                { text: 'Стратегии бизнеса (Capitalism Lab).', scores: { constructor: 0, manager: 2, programmer: 0 } },
+            ]},
+            { section: 'manager', q: 'Покупки планирую:', options: [
+                { text: 'Беру что увидел.', scores: { constructor: 0, manager: 0, programmer: 0 } },
+                { text: 'По списку.', scores: { constructor: 0, manager: 1, programmer: 0 } },
+                { text: 'Скидки ловлю, окупаемость считаю.', scores: { constructor: 0, manager: 2, programmer: 0 } },
+            ]},
+            // Раздел 2: Конструктор 
+            { section: 'constructor', q: 'Любимая игрушка в детстве:', options: [
+                { text: 'Плюшевые игрушки.', scores: { constructor: 0, manager: 0, programmer: 0 } },
+                { text: 'Мячик или карты.', scores: { constructor: 1, manager: 0, programmer: 0 } },
+                { text: 'Lego с шестернями.', scores: { constructor: 2, manager: 0, programmer: 0 } },
+            ]},
+            { section: 'constructor', q: 'Сломался телефон:', options: [
+                { text: 'Новый беру.', scores: { constructor: 0, manager: 0, programmer: 0 } },
+                { text: 'В ремонт.', scores: { constructor: 1, manager: 0, programmer: 0 } },
+                { text: 'Сам разбираю, паяю.', scores: { constructor: 2, manager: 0, programmer: 0 } },
+            ]},
+            { section: 'constructor', q: 'Игра, которая погружает тебя:', options: [
+                { text: 'Строительство.', scores: { constructor: 0, manager: 0, programmer: 0 } },
+                { text: 'Симуляторы.', scores: { constructor: 1, manager: 0, programmer: 0 } },
+                { text: 'Головоломки.', scores: { constructor: 2, manager: 0, programmer: 0 } },
+            ]},
+            // Раздел 3: Программист
+            { section: 'programmer', q: 'Игры с друзьями:', options: [
+                { text: 'Спортивные игры.', scores: { constructor: 0, manager: 0, programmer: 0 } },
+                { text: 'Карты.', scores: { constructor: 0, manager: 0, programmer: 1 } },
+                { text: 'Настольные игры.', scores: { constructor: 0, manager: 0, programmer: 2 } },
+            ]},
+            { section: 'programmer', q: 'Головоломка:', options: [
+                { text: 'Не люблю.', scores: { constructor: 0, manager: 0, programmer: 0 } },
+                { text: 'Простые.', scores: { constructor: 0, manager: 0, programmer: 1 } },
+                { text: 'Шаги расписываю.', scores: { constructor: 0, manager: 0, programmer: 2 } },
+            ]},
+            { section: 'programmer', q: 'Задачи дома:', options: [
+                { text: 'Делаю, что велели.', scores: { constructor: 0, manager: 0, programmer: 0 } },
+                { text: 'По настроению.', scores: { constructor: 0, manager: 0, programmer: 1 } },
+                { text: 'Составляю график.', scores: { constructor: 0, manager: 0, programmer: 2 } },
+            ]},
+        ];
+
+        const ROLE_PROFILES = {
+            constructor: {
+                role: 'proto',
+                title: 'КОНСТРУКТИУС',
+                subtitle: 'Конструктор',
+                icon: '🔧',
+                color: '#ffb36b',
+                description: 'Ты мыслишь руками. Когда другие говорят — ты уже собираешь. Твоя роль — создавать, чинить, изобретать. В команде «Пракрити» тебе место за столом прототипирования.',
+                gameRole: 'proto'
+            },
+            manager: {
+                role: 'model',
+                title: 'ЭКОНОМИКУС',
+                subtitle: 'Экономист & Стратег',
+                icon: '📊',
+                color: '#7de8ff',
+                description: 'Ты принимаешь решения на основе цифр. Бюджет, ROI, рыночная стратегия — это твоя стихия. В команде «Пракрити» ты отвечаешь за экономику проекта.',
+                gameRole: 'model'
+            },
+            programmer: {
+                role: 'code',
+                title: 'КОДИУС',
+                subtitle: 'Программист & Алгоритмист',
+                icon: '💻',
+                color: '#c58fff',
+                description: 'Твой мозг работает как процессор. Логика, алгоритмы, структура — всё по шагам. В команде «Пракрити» ты пишешь код управления манипулятором.',
+                gameRole: 'code'
+            }
+        };
+
+        const QuizScreen = () => {
+            const { handleRoleSelect, setCurrentScreen, setSimulationData } = useContext(GameContext);
+            const [currentQ, setCurrentQ] = useState(0);
+            const [scores, setScores] = useState({ constructor: 0, manager: 0, programmer: 0 });
+            const [showResult, setShowResult] = useState(false);
+            const [finalProfile, setFinalProfile] = useState(null);
+            const [selectedOption, setSelectedOption] = useState(null);
+            const [animating, setAnimating] = useState(false);
+            const [resultVisible, setResultVisible] = useState(false);
+
+            const question = QUIZ_QUESTIONS[currentQ];
+            const progress = ((currentQ) / QUIZ_QUESTIONS.length) * 100;
+
+            const handleSelect = (optionIdx) => {
+                if (animating) return;
+                setSelectedOption(optionIdx);
+                setAnimating(true);
+                setTimeout(() => {
+                    const s = QUIZ_QUESTIONS[currentQ].options[optionIdx].scores;
+                    const newScores = {
+                        constructor: scores.constructor + s.constructor,
+                        manager: scores.manager + s.manager,
+                        programmer: scores.programmer + s.programmer,
+                    };
+                    setScores(newScores);
+                    if (currentQ < QUIZ_QUESTIONS.length - 1) {
+                        setCurrentQ(prev => prev + 1);
+                        setSelectedOption(null);
+                        setAnimating(false);
+                    } else {
+                        const max = Math.max(newScores.constructor, newScores.manager, newScores.programmer);
+                        const winKey = newScores.constructor === max ? 'constructor' : newScores.manager === max ? 'manager' : 'programmer';
+                        const profile = ROLE_PROFILES[winKey];
+                        setFinalProfile(profile);
+                        setSimulationData(prev => ({ ...prev, neuroProfile: newScores }));
+                        setShowResult(true);
+                        setTimeout(() => setResultVisible(true), 50);
+                    }
+                }, 500);
+            };
+
+            var labels = ['A', 'B', 'C'];
+
+            /* ─── RESULT SCREEN ─── */
+            if (showResult && finalProfile) return (
+                <div style={{
+                    minHeight: '100vh',
+                    background: 'radial-gradient(ellipse at 30% 20%, #061828 0%, #020408 65%, #000 100%)',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    position: 'relative', fontFamily: "'IBM Plex Mono', monospace",
+                    opacity: resultVisible ? 1 : 0, transition: 'opacity 0.5s ease',
+                }}>
+                    {/* Grid */}
+                    <div style={{ position: 'absolute', inset: 0, backgroundImage: 'linear-gradient(rgba(0,243,255,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(0,243,255,0.025) 1px, transparent 1px)', backgroundSize: '60px 60px', pointerEvents: 'none' }} />
+                    <style>{`
+                        @keyframes resGlow { 0%,100% { box-shadow: 0 0 30px ${finalProfile.color}33; } 50% { box-shadow: 0 0 60px ${finalProfile.color}55; } }
+                        @keyframes resSlide { from { opacity:0; transform: translateY(20px); } to { opacity:1; transform:translateY(0); } }
+                        .res-in { animation: resSlide 0.6s ease forwards; opacity:0; }
+                    `}</style>
+                    {/* Scanlines */}
+                    <div style={{ position: 'absolute', inset: 0, background: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.06) 3px, rgba(0,0,0,0.06) 4px)', pointerEvents: 'none' }} />
+                    {/* Glow */}
+                    <div style={{ position: 'absolute', top: '-80px', left: '50%', transform: 'translateX(-50%)', width: '600px', height: '400px', background: `radial-gradient(ellipse, ${finalProfile.color}14 0%, transparent 70%)`, pointerEvents: 'none' }} />
+
+                    {/* Header */}
+                    <div style={{ position: 'absolute', top: '24px', left: '40px', right: '40px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 2 }}>
+                        <div style={{ fontSize: '10px', letterSpacing: '0.3em', color: 'var(--prof-accent)', fontWeight: '800' }}>TECHNOLAND · НЕЙРОПРОФИЛЬ</div>
+                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', letterSpacing: '0.15em' }}>АНАЛИЗ ЗАВЕРШЁН</div>
+                    </div>
+
+                    <div style={{ width: '100%', maxWidth: '560px', padding: '0 24px', zIndex: 2 }}>
+                        {/* Sub label */}
+                        <div className="res-in" style={{ textAlign: 'center', marginBottom: '20px', animationDelay: '0.1s' }}>
+                            <div style={{ fontSize: '10px', letterSpacing: '0.4em', color: '#00f3ff', fontWeight: '800', marginBottom: '10px' }}>
+                                — РЕКОМЕНДОВАННАЯ РОЛЬ —
+                            </div>
+                        </div>
+
+                        {/* Role card */}
+                        <div className="res-in" style={{ animationDelay: '0.2s', background: 'rgba(6,12,24,0.8)', border: `1px solid ${finalProfile.color}44`, borderRadius: '20px', padding: '40px', backdropFilter: 'blur(16px)', animation: 'resGlow 3s ease-in-out infinite, resSlide 0.6s ease 0.2s both', marginBottom: '24px', textAlign: 'center' }}>
+                            <div style={{ fontSize: '64px', marginBottom: '20px' }}>{finalProfile.icon}</div>
+                            <h1 style={{ fontFamily: "'Orbitron', sans-serif", fontSize: '36px', fontWeight: '900', color: finalProfile.color, marginBottom: '6px', letterSpacing: '2px' }}>{finalProfile.title}</h1>
+                            <div style={{ fontSize: '13px', letterSpacing: '0.2em', color: 'rgba(255,255,255,0.45)', marginBottom: '24px', textTransform: 'uppercase' }}>{finalProfile.subtitle}</div>
+                            <div style={{ width: '60px', height: '1px', background: `linear-gradient(90deg, transparent, ${finalProfile.color}, transparent)`, margin: '0 auto 24px' }} />
+                            <p style={{ fontSize: '15px', color: 'rgba(226,232,240,0.75)', lineHeight: '1.85', fontFamily: "'Inter', sans-serif" }}>
+                                {finalProfile.description}
+                            </p>
+                        </div>
+
+                        {/* Score bars */}
+                        <div className="res-in" style={{ animationDelay: '0.35s', background: 'rgba(6,12,24,0.6)', border: '1px solid rgba(0,243,255,0.15)', borderRadius: '12px', padding: '16px 20px', marginBottom: '20px' }}>
+                            <div style={{ fontSize: '9px', letterSpacing: '0.2em', color: 'var(--prof-accent)', fontWeight: '800', marginBottom: '12px' }}>ПРОФИЛЬ СКИЛЛОВ</div>
+                            {[
+                                { key: 'constructor', label: 'Конструирование', color: '#ffb36b', max: 6 },
+                                { key: 'manager', label: 'Стратегия & Финансы', color: '#7de8ff', max: 6 },
+                                { key: 'programmer', label: 'Программирование', color: '#c58fff', max: 6 }
+                            ].map(({ key, label, color, max }) => (
+                                <div key={key} style={{ marginBottom: '10px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px' }}>
+                                        <span style={{ color: 'rgba(255,255,255,0.6)' }}>{label}</span>
+                                        <span style={{ color, fontWeight: '800' }}>{scores[key]} / {max}</span>
+                                    </div>
+                                    <div style={{ height: '6px', background: 'rgba(255,255,255,0.06)', borderRadius: '3px', overflow: 'hidden' }}>
+                                        <div style={{ height: '100%', width: `${(scores[key] / max) * 100}%`, background: `linear-gradient(90deg, ${color}77, ${color})`, borderRadius: '2px', transition: 'width 0.8s ease' }} />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="res-in" style={{ animationDelay: '0.45s', display: 'flex', gap: '10px' }}>
+                            <button
+                                onClick={() => { handleRoleSelect(finalProfile.gameRole); }}
+                                style={{
+                                    flex: 2, padding: '14px', borderRadius: '10px', fontSize: '12px', fontWeight: '800',
+                                    letterSpacing: '0.2em', cursor: 'pointer',
+                                    border: `1px solid ${finalProfile.color}80`,
+                                    background: `${finalProfile.color}18`, color: finalProfile.color,
+                                    fontFamily: "'IBM Plex Mono', monospace", transition: 'all 0.2s'
+                                }}
+                            >
+                                ПРИНЯТЬ РОЛЬ → {finalProfile.title}
+                            </button>
+                            <button
+                                onClick={() => setCurrentScreen('hub')}
+                                style={{
+                                    flex: 1, padding: '14px', borderRadius: '10px', fontSize: '11px', fontWeight: '700',
+                                    letterSpacing: '0.15em', cursor: 'pointer',
+                                    border: '1px solid rgba(255,255,255,0.12)',
+                                    background: 'transparent', color: 'rgba(255,255,255,0.4)',
+                                    fontFamily: "'IBM Plex Mono', monospace", transition: 'all 0.2s'
+                                }}
+                            >
+                                ВЫБРАТЬ САМОМУ
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+
+            /* ─── QUIZ SCREEN ─── */
+            return (
+                <div style={{
+                    minHeight: '100vh',
+                    background: 'radial-gradient(ellipse at 30% 20%, #061828 0%, #030508 60%, #000204 100%)',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    position: 'relative', fontFamily: "'IBM Plex Mono', monospace",
+                }}>
+                    <style>{`
+                        @keyframes opt-enter {
+                            from { opacity:0; transform: translateX(-12px); }
+                            to { opacity:1; transform: translateX(0); }
+                        }
+                        .quiz-opt-btn {
+                            display: flex; align-items: center; gap: 18px;
+                            padding: 14px 20px; border-radius: 12px;
+                            border: 1px solid rgba(0,243,255,0.18);
+                            background: rgba(10,15,30,0.55);
+                            cursor: pointer; transition: all 0.25s ease; text-align: left; width: 100%;
+                        }
+                        .quiz-opt-btn:hover:not(:disabled) {
+                            border-color: rgba(0,243,255,0.7);
+                            background: rgba(0,243,255,0.08);
+                            transform: translateX(6px);
+                            box-shadow: 0 0 12px rgba(0,243,255,0.15);
+                        }
+                        .quiz-opt-btn.selected {
+                            border-color: #00f3ff;
+                            background: rgba(0,243,255,0.15);
+                            box-shadow: 0 0 18px rgba(0,243,255,0.2);
+                            transform: translateX(10px);
+                        }
+                        .quiz-opt-btn.selected .opt-label { background: #00f3ff; color: #000; box-shadow: 0 0 14px rgba(0,243,255,0.7); }
+                        .quiz-opt-btn:hover:not(.selected):not(:disabled) .opt-label { background: rgba(0,243,255,0.55); color: #000; }
+                        .opt-label {
+                            display: flex; align-items: center; justify-content: center;
+                            min-width: 36px; height: 36px; border-radius: 8px;
+                            background: rgba(0,243,255,0.12); color: #00f3ff;
+                            font-size: 1rem; font-weight: 900; transition: all 0.25s ease;
+                            flex-shrink: 0;
+                        }
+                    `}</style>
+                    {/* Grid lines background */}
+                    <div style={{ position: 'absolute', inset: 0, backgroundImage: 'linear-gradient(rgba(0,243,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0,243,255,0.03) 1px, transparent 1px)', backgroundSize: '60px 60px', pointerEvents: 'none' }} />
+                    {/* Scanlines */}
+                    <div style={{ position: 'absolute', inset: 0, background: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.06) 3px, rgba(0,0,0,0.06) 4px)', pointerEvents: 'none' }} />
+                    {/* Glow top */}
+                    <div style={{ position: 'absolute', top: '-60px', left: '50%', transform: 'translateX(-50%)', width: '600px', height: '350px', background: 'radial-gradient(ellipse, rgba(0,243,255,0.07) 0%, transparent 70%)', pointerEvents: 'none' }} />
+
+                    {/* Header */}
+                    <div style={{ position: 'absolute', top: '24px', left: '40px', right: '40px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 2 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--prof-accent)', boxShadow: '0 0 10px var(--prof-accent)', animation: 'blink 1.5s ease-in-out infinite' }} />
+                            <div style={{ fontSize: '10px', letterSpacing: '0.3em', color: 'var(--prof-accent)', fontWeight: '800' }}>TECHNOLAND · НЕЙРОПРОФИЛЬ</div>
+                        </div>
+                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.2)', letterSpacing: '0.15em', fontFamily: 'IBM Plex Mono' }}>ИНДИЯ, 2026</div>
+                    </div>
+
+                    <div style={{ textAlign: 'center', marginBottom: '28px', zIndex: 2, position: 'relative' }}>
+                        <div style={{ fontSize: '11px', letterSpacing: '0.5em', color: 'rgba(0,243,255,0.5)', fontWeight: '700', marginBottom: '16px', textTransform: 'uppercase' }}>⬡ &nbsp;АНАЛИЗ НЕЙРОПРОФИЛЯ&nbsp; ⬡</div>
+                        <h1 style={{ fontFamily: "'Orbitron', sans-serif", fontSize: 'clamp(28px, 5vw, 42px)', fontWeight: '900', color: '#ffffff', letterSpacing: '3px', margin: '0 0 12px', textShadow: '0 0 40px rgba(0,243,255,0.5), 0 2px 8px rgba(0,0,0,0.8)' }}>
+                            ТЕСТ&nbsp;НЕЙРОПРОФИЛЯ
+                        </h1>
+                        <div style={{ width: '80px', height: '2px', background: 'linear-gradient(90deg, transparent, #00f3ff, transparent)', margin: '0 auto 12px' }} />
+                        <p style={{ color: 'rgba(0,243,255,0.6)', fontSize: '13px', letterSpacing: '0.15em' }}>Определите вашу оптимальную роль в команде</p>
+                    </div>
+
+                    {/* Progress */}
+                    <div style={{ width: '100%', maxWidth: '640px', marginBottom: '24px', position: 'relative', zIndex: 2 }}>
+                        <div style={{ height: '2px', background: 'rgba(255,255,255,0.06)', borderRadius: '2px', overflow: 'hidden' }}>
+                            <div style={{ height: '100%', width: progress + '%', background: 'linear-gradient(90deg, rgba(0,243,255,0.5), #00f3ff)', borderRadius: '2px', transition: 'width 0.5s ease', boxShadow: '0 0 10px rgba(0,243,255,0.5)' }} />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '9px', letterSpacing: '0.2em' }}>
+                            <span style={{ color: 'var(--prof-accent)', fontWeight: '700' }}>ВОПРОС {currentQ + 1} / {QUIZ_QUESTIONS.length}</span>
+                            <span style={{ color: 'rgba(255,255,255,0.25)' }}>{Math.round(progress)}%</span>
+                        </div>
+                    </div>
+
+                    {/* Question card */}
+                    <div style={{ width: '100%', maxWidth: '640px', position: 'relative', zIndex: 2 }}>
+                        <div style={{ background: 'rgba(4,10,22,0.88)', border: '1px solid rgba(0,243,255,0.22)', borderRadius: '16px', padding: '32px', backdropFilter: 'blur(20px)', boxShadow: '0 24px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(0,243,255,0.06), inset 0 1px 0 rgba(0,243,255,0.08)' }}>
+                            {/* Corner decorations */}
+                            <div style={{ position: 'absolute', top: 0, left: 0, width: '18px', height: '18px', borderTop: '2px solid rgba(0,243,255,0.6)', borderLeft: '2px solid rgba(0,243,255,0.6)', borderRadius: '16px 0 0 0', pointerEvents: 'none' }} />
+                            <div style={{ position: 'absolute', top: 0, right: 0, width: '18px', height: '18px', borderTop: '2px solid rgba(0,243,255,0.6)', borderRight: '2px solid rgba(0,243,255,0.6)', borderRadius: '0 16px 0 0', pointerEvents: 'none' }} />
+                            <div style={{ position: 'absolute', bottom: 0, left: 0, width: '18px', height: '18px', borderBottom: '2px solid rgba(0,243,255,0.6)', borderLeft: '2px solid rgba(0,243,255,0.6)', borderRadius: '0 0 0 16px', pointerEvents: 'none' }} />
+                            <div style={{ position: 'absolute', bottom: 0, right: 0, width: '18px', height: '18px', borderBottom: '2px solid rgba(0,243,255,0.6)', borderRight: '2px solid rgba(0,243,255,0.6)', borderRadius: '0 0 16px 0', pointerEvents: 'none' }} />
+                            <h2 style={{ color: '#7de8ff', fontSize: '1.1rem', fontWeight: '700', lineHeight: '1.65', marginBottom: '24px', borderLeft: '3px solid #00f3ff', paddingLeft: '16px', fontFamily: "'Inter', sans-serif", textShadow: '0 0 20px rgba(0,243,255,0.2)' }}>
+                                {question.q}
+                            </h2>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                {question.options.map((opt, idx) => {
+                                    const isSel = selectedOption === idx;
+                                    return (
+                                        <button key={idx} onClick={() => handleSelect(idx)} disabled={animating} className={`quiz-opt-btn ${isSel ? 'selected' : ''}`} style={{ opacity: animating && !isSel ? 0.25 : 1 }}>
+                                            <span className="opt-label">{labels[idx]}</span>
+                                            <span style={{ color: isSel ? 'var(--prof-accent)' : 'rgba(226,232,240,0.85)', fontSize: '0.95rem', lineHeight: '1.5', fontFamily: "'Inter', sans-serif", fontWeight: isSel ? '700' : '400' }}>{opt.text}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Skip */}
+                        <div style={{ marginTop: '20px', textAlign: 'center' }}>
+                            <button
+                                onClick={() => setCurrentScreen('hub')}
+                                style={{ background: 'transparent', border: '1px solid rgba(0,243,255,0.15)', color: 'rgba(0,243,255,0.4)', padding: '10px 28px', borderRadius: '30px', fontSize: '10px', cursor: 'pointer', letterSpacing: '0.2em', fontFamily: "'IBM Plex Mono', monospace', transition: 'all 0.2s" }}
+                            >
+                                ПРОПУСТИТЬ ТЕСТ
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+
+        const HubScreen = () => {
+            const { setCurrentScreen, teamState, handleRoleSelect, simulationData } = useContext(GameContext);
+            const np = simulationData?.neuroProfile;
+            let optimal = null;
+            if (np) {
+                const max = Math.max(np.constructor, np.manager, np.programmer);
+                optimal = np.constructor === max ? 'proto' : np.manager === max ? 'model' : 'code';
+            }
+            return (
+                <div style={{ padding: '40px 20px', minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: 'url(/games/workshop_bg.png) center/cover no-repeat fixed', position: 'relative' }}>
+                    <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 50% 50%, rgba(8,10,18,0.7) 0%, rgba(8,10,18,0.95) 100%)', backdropFilter: 'blur(4px)' }} />
+                    <style>{`
+                        @keyframes shimmer {
+                            0% { background-position: -200% center; }
+                            100% { background-position: 200% center; }
+                        }
+                        @keyframes fadeInUp {
+                            from { opacity: 0; transform: translateY(40px); }
+                            to { opacity: 1; transform: translateY(0); }
+                        }
+                        @keyframes float {
+                            0%, 100% { transform: translateY(0px); }
+                            50% { transform: translateY(-14px); }
+                        }
+                        .shimmer-text {
+                            background: linear-gradient(90deg, #00f3ff 0%, #c58fff 35%, #7de8ff 50%, #c58fff 65%, #00f3ff 100%);
+                            background-size: 200% auto;
+                            -webkit-background-clip: text;
+                            -webkit-text-fill-color: transparent;
+                            background-clip: text;
+                            animation: shimmer 3s linear infinite;
+                        }
+                        .glass-panel {
+                            background: rgba(14,17,32,0.88);
+                            backdrop-filter: blur(16px);
+                            border: 1px solid rgba(0,243,255,0.18);
+                            transition: all 0.3s ease;
+                        }
+                        .glass-panel:hover {
+                            border-color: rgba(0,243,255,0.45);
+                            box-shadow: 0 0 30px rgba(0,243,255,0.25);
+                            transform: translateY(-6px);
+                        }
+                        .corner-tl { position: absolute; top: 0; left: 0; width: 20px; height: 20px; border-top: 2px solid rgba(0,243,255,0.6); border-left: 2px solid rgba(0,243,255,0.6); }
+                        .corner-tr { position: absolute; top: 0; right: 0; width: 20px; height: 20px; border-top: 2px solid rgba(0,243,255,0.6); border-right: 2px solid rgba(0,243,255,0.6); }
+                        .corner-bl { position: absolute; bottom: 0; left: 0; width: 20px; height: 20px; border-bottom: 2px solid rgba(0,243,255,0.6); border-left: 2px solid rgba(0,243,255,0.6); }
+                        .corner-br { position: absolute; bottom: 0; right: 0; width: 20px; height: 20px; border-bottom: 2px solid rgba(0,243,255,0.6); border-right: 2px solid rgba(0,243,255,0.6); }
+                    `}</style>
+
+                    <header style={{ position: 'relative', zIndex: 2, marginBottom: '80px', textAlign: 'center', animation: 'fadeInUp 0.8s ease forwards' }}>
+                        <div style={{ fontSize: '0.75rem', letterSpacing: '0.4em', textTransform: 'uppercase', color: 'rgba(6,182,212,0.7)', marginBottom: '16px' }}>
+                            Индия, 2026 • Пракрити
+                        </div>
+                        <h1 className="shimmer-text" style={{ fontSize: '5rem', marginBottom: '10px', letterSpacing: '4px', fontWeight: '900', filter: 'drop-shadow(0 0 20px rgba(0,243,255,0.3))' }}>
+                            ПРАКРИТИ
+                        </h1>
+                        <div style={{ color: 'rgba(148,163,184,0.8)', fontSize: '1.1rem', fontWeight: '600', letterSpacing: '2px', opacity: 0.9 }}>
+                            Спроектируй 3-осевой роботизированный манипулятор
+                        </div>
+                    </header>
+
+                    <div style={{ position: 'relative', zIndex: 2, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '40px', maxWidth: '1200px', margin: '0 auto', justifyContent: 'center', width: '100%', animation: 'fadeInUp 0.8s ease 0.2s forwards', opacity: 0 }}>
+                        <OperatorCard
+                            role="proto"
+                            title="КОНСТРУКТОР"
+                            subtitle="Проектирование"
+                            color="#f97316"
+                            isCompleted={teamState.prototyping?.status === 'done'}
+                            onClick={() => handleRoleSelect('proto')}
+                            matchScore={np ? np.constructor : undefined}
+                            maxScore={6}
+                            isOptimal={optimal === 'proto'}
+                        />
+                        <OperatorCard
+                            role="model"
+                            title="ЭКОНОМИСТ"
+                            subtitle="Экономика"
+                            color="#06b6d4"
+                            isCompleted={teamState.modeling?.status === 'done'}
+                            onClick={() => handleRoleSelect('model')}
+                            matchScore={np ? np.manager : undefined}
+                            maxScore={6}
+                            isOptimal={optimal === 'model'}
+                        />
+                        <OperatorCard
+                            role="code"
+                            title="ПРОГРАММИСТ"
+                            subtitle="Код и алгоритмы"
+                            color="#8b5cf6"
+                            isCompleted={teamState.coding?.status === 'done'}
+                            onClick={() => handleRoleSelect('code')}
+                            matchScore={np ? np.programmer : undefined}
+                            maxScore={6}
+                            isOptimal={optimal === 'code'}
+                        />
+                    </div>
+                </div>
+            );
+        };
+
+        const CleanupAnimation = () => {
+            const { simulationData } = useContext(GameContext);
+            const hardware = simulationData?.hardware || {};
+            const [ikState, setIkState] = useState({ base: 0, shoulder: 40, elbow: 60, wrist: 0 });
+            const [gripClosed, setGripClosed] = useState(false);
+            
+            const [trashState, setTrashState] = useState([
+                { id: 1, x: -39, y: 334, type: 'bottle', state: 'ground' },
+                { id: 2, x: -160, y: 325, type: 'electronics', state: 'ground' },
+                { id: 3, x: -190, y: 307, type: 'can', state: 'ground' }
+            ]);
+
+            useEffect(() => {
+                let reqId;
+                let startTime = Date.now();
+                
+                const sequence = [
+                    { t: 0, s: { shoulder: -80, elbow: -90, wrist: 10 }, grip: false },
+                    
+                    // Item 1 (x: -39)
+                    { t: 1000, s: { shoulder: -80, elbow: -90, wrist: 10 }, grip: false },
+                    { t: 1500, s: { shoulder: -80, elbow: -110, wrist: 10 }, grip: true },
+                    { t: 2000, s: { shoulder: -50, elbow: -50, wrist: 0 }, grip: true }, 
+                    { t: 3000, s: { shoulder: 20, elbow: 77, wrist: 83 }, grip: true }, 
+                    { t: 3500, s: { shoulder: 20, elbow: 77, wrist: 83 }, grip: false }, 
+                    
+                    // Item 2 (x: -160)
+                    { t: 4500, s: { shoulder: -50, elbow: -50, wrist: 0 }, grip: false }, 
+                    { t: 5500, s: { shoulder: -90, elbow: -25, wrist: -45 }, grip: false },
+                    { t: 6000, s: { shoulder: -90, elbow: -45, wrist: -45 }, grip: true },
+                    { t: 6500, s: { shoulder: -50, elbow: -50, wrist: 0 }, grip: true },
+                    { t: 7500, s: { shoulder: 20, elbow: 77, wrist: 83 }, grip: true },
+                    { t: 8000, s: { shoulder: 20, elbow: 77, wrist: 83 }, grip: false },
+                    
+                    // Item 3 (x: -190)
+                    { t: 9000, s: { shoulder: -50, elbow: -50, wrist: 0 }, grip: false },
+                    { t: 10000, s: { shoulder: -105, elbow: 20, wrist: -75 }, grip: false },
+                    { t: 10500, s: { shoulder: -105, elbow: 0, wrist: -75 }, grip: true },
+                    { t: 11000, s: { shoulder: -50, elbow: -50, wrist: 0 }, grip: true },
+                    { t: 12000, s: { shoulder: 20, elbow: 77, wrist: 83 }, grip: true },
+                    { t: 12500, s: { shoulder: 20, elbow: 77, wrist: 83 }, grip: false },
+
+                    { t: 13500, s: { shoulder: -80, elbow: -90, wrist: 10 }, grip: false },
+                ];
+                
+                const totalDuration = 14500;
+                const lerp = (a, b, t) => {
+                    const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+                    return a + (b - a) * ease;
+                };
+
+                const loop = () => {
+                    const elapsed = (Date.now() - startTime) % totalDuration;
+                    
+                    let kf1 = sequence[0], kf2 = sequence[0];
+                    for(let i=0; i < sequence.length - 1; i++) {
+                        if (elapsed >= sequence[i].t && elapsed < sequence[i+1].t) {
+                            kf1 = sequence[i]; kf2 = sequence[i+1]; break;
+                        }
+                    }
+                    if (elapsed >= sequence[sequence.length-1].t) {
+                        kf1 = sequence[sequence.length-1]; kf2 = sequence[sequence.length-1];
+                    }
+                    
+                    const dt = kf2.t - kf1.t;
+                    const progress = dt === 0 ? 1 : Math.max(0, Math.min(1, (elapsed - kf1.t) / dt));
+                    
+                    setIkState({
+                        base: 0,
+                        shoulder: lerp(kf1.s.shoulder, kf2.s.shoulder, progress),
+                        elbow: lerp(kf1.s.elbow, kf2.s.elbow, progress),
+                        wrist: lerp(kf1.s.wrist, kf2.s.wrist, progress)
+                    });
+                    
+                    setGripClosed(kf2.grip);
+                    
+                    setTrashState([
+                        { id: 1, x: -39, type: 'bottle', y: 334, state: elapsed < 1200 ? 'ground' : elapsed < 3500 ? 'grabbed' : 'bin' },
+                        { id: 2, x: -160, type: 'electronics', y: 325, state: elapsed < 5800 ? 'ground' : elapsed < 8000 ? 'grabbed' : 'bin' },
+                        { id: 3, x: -190, type: 'can', y: 307, state: elapsed < 10300 ? 'ground' : elapsed < 12500 ? 'grabbed' : 'bin' }
+                    ]);
+
+                    reqId = requestAnimationFrame(loop);
+                };
+                
+                reqId = requestAnimationFrame(loop);
+                return () => cancelAnimationFrame(reqId);
+            }, []);
+
+            const s_rad = ikState.shoulder * Math.PI / 180;
+            const e_rad = ikState.elbow * Math.PI / 180;
+            const w_rad = ikState.wrist * Math.PI / 180;
+
+            const L1 = 165, L2 = 135, L3 = 90;
+            const BASE_X = 100, BASE_Y = 190, baseJY = BASE_Y - 50;
+
+            const sEndX = BASE_X + L1 * Math.sin(s_rad);
+            const sEndY = baseJY - L1 * Math.cos(s_rad);
+            const eEndX = sEndX + L2 * Math.sin(s_rad + e_rad);
+            const eEndY = sEndY - L2 * Math.cos(s_rad + e_rad);
+            const wEndX = eEndX + L3 * Math.sin(s_rad + e_rad + w_rad);
+            const wEndY = eEndY - L3 * Math.cos(s_rad + e_rad + w_rad);
+
+            const sceneBackground = (
+                <g>
+                    <defs>
+                        <radialGradient id="sunGlowBig" cx="50%" cy="50%" r="50%">
+                            <stop offset="0%" stopColor="rgba(249, 115, 22, 0.5)" />
+                            <stop offset="100%" stopColor="transparent" />
+                        </radialGradient>
+                    </defs>
+
+                    {/* Wheeled Platform under Base */}
+                    <g transform="translate(100, 190)">
+                        <rect x="-45" y="0" width="90" height="12" rx="4" fill="rgba(15,20,30,0.95)" stroke="#00f3ff" strokeWidth="1.5" />
+                        <rect x="-35" y="2" width="70" height="3" rx="1" fill="rgba(255,255,255,0.1)" />
+                        <circle cx="-28" cy="15" r="5" fill="#0a0a0a" stroke="#8fa7bc" strokeWidth="1.5" />
+                        <circle cx="28" cy="15" r="5" fill="#0a0a0a" stroke="#8fa7bc" strokeWidth="1.5" />
+                        <line x1="-33" y1="15" x2="-23" y2="15" stroke="#333" strokeWidth="1" />
+                        <line x1="23" y1="15" x2="33" y2="15" stroke="#333" strokeWidth="1" />
+                    </g>
+
+                    {/* Recycle Bin Back layer */ /* y=115 aligns with the cart at y=205 */ }
+                    <rect x="230" y="115" width="120" height="90" fill="rgba(10,15,25,0.95)" stroke="#4ade80" strokeWidth="3" rx="8" />
+                </g>
+            );
+
+            const sceneForeground = (
+                <g>
+                    {trashState.map(trash => {
+                        let tx = trash.x;
+                        let ty = trash.y;
+                        let ang = 0;
+                        if (trash.state === 'grabbed') {
+                            tx = wEndX;
+                            ty = wEndY;
+                            ang = -(ikState.shoulder + ikState.elbow + ikState.wrist);
+                        } else if (trash.state === 'bin') {
+                            tx = 260 + trash.id * 15;
+                            ty = 185; 
+                        }
+
+                        return (
+                            <g key={trash.id} transform={`translate(${tx}, ${ty}) rotate(${ang})`} style={{ transition: trash.state === 'bin' ? 'none' : 'transform 0.1s linear' }}>
+                                {trash.type === 'bottle' && (
+                                    <g>
+                                        <rect x="-6" y="-18" width="12" height="36" rx="3" fill="rgba(56, 189, 248, 0.4)" stroke="#38bdf8" strokeWidth="2" />
+                                        <rect x="-3" y="-24" width="6" height="6" fill="#38bdf8" />
+                                    </g>
+                                )}
+                                {trash.type === 'can' && (
+                                    <rect x="-9" y="-12" width="18" height="24" rx="3" fill="rgba(248, 113, 113, 0.4)" stroke="#f87171" strokeWidth="2" />
+                                )}
+                                {trash.type === 'electronics' && (
+                                    <g>
+                                        <rect x="-15" y="-9" width="30" height="18" fill="rgba(34, 197, 94, 0.3)" stroke="#22c55e" strokeWidth="2" />
+                                        <rect x="-9" y="-6" width="6" height="6" fill="#166534" />
+                                        <rect x="3" y="-6" width="6" height="6" fill="#166534" />
+                                        <line x1="-15" y1="-3" x2="15" y2="-3" stroke="#22c55e" strokeWidth="1" />
+                                    </g>
+                                )}
+                            </g>
+                        );
+                    })}
+                    {/* Bin Front Lip */}
+                    <path d="M 220 115 L 360 115 L 360 125 L 220 125 Z" fill="rgba(74, 222, 128, 0.2)" stroke="#4ade80" strokeWidth="2" />
+                </g>
+            );
+
+            return (
+                <div style={{
+                    borderRadius: '24px',
+                    border: '1px solid rgba(0, 243, 255, 0.3)',
+                    background: 'url(/games/workshop_clean_bg.jpg) center/cover no-repeat',
+                    width: '100%',
+                    height: '100%',
+                    minHeight: '480px',
+                    position: 'relative',
+                    overflow: 'hidden',
+                    boxShadow: '0 20px 80px rgba(0,243,255,0.15), inset 0 0 100px rgba(0,0,0,0.8)'
+                }}>
+                    <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(0deg, rgba(6,11,19,0.9) 0%, rgba(6,11,19,0.5) 100%)' }} />
+                    <div style={{ position: 'relative', zIndex: 2, height: '100%' }}>
+                        <ManipulatorVisualizer 
+                            hardware={hardware}
+                            ikState={{
+                                base: (ikState.base || 0) * Math.PI / 180,
+                                shoulder: (ikState.shoulder || 0) * Math.PI / 180,
+                                elbow: (ikState.elbow || 0) * Math.PI / 180,
+                                wrist: (ikState.wrist || 0) * Math.PI / 180
+                            }}
+                            gripClosed={gripClosed}
+                            scale={2.2}
+                            baseYOffset={160}
+                            showStats={false}
+                            sceneBackground={sceneBackground}
+                            sceneForeground={sceneForeground}
+                        />
+                    </div>
+                </div>
+            );
+        };
+
+        const LEADERBOARD_DATA = [
+            { rank: 1, name: 'Алексей К.', team: 'Дельта-7', score: 947, grade: 'S', role: 'proto' },
+            { rank: 2, name: 'Марина С.', team: 'Омега-3', score: 891, grade: 'A', role: 'model' },
+            { rank: 3, name: 'Игорь Т.', team: 'Альфа-1', score: 834, grade: 'A', role: 'code' },
+            { rank: 4, name: 'Наташа В.', team: 'Сигма-2', score: 762, grade: 'A', role: 'proto' },
+            { rank: 5, name: 'Дмитрий П.', team: 'Гамма-5', score: 711, grade: 'A', role: 'model' },
+        ];
+
+        const FinalScreen = () => {
+            const { simulationData } = useContext(GameContext);
+            const [showLeaderboard, setShowLeaderboard] = useState(false);
+            const [exiting, setExiting] = useState(false);
+
+            const result = simulationData.finalResult || {
+                totalScore: 0,
+                engineering: 0,
+                completion: 0,
+                trust: 0,
+                metrics: { bom: 0, reliability: 0, cycle: 0, payload: 0 }
+            };
+
+            const totalScore = result.totalScore || 0;
+            const grade = totalScore >= 900 ? 'S' : totalScore >= 750 ? 'A' : totalScore >= 600 ? 'B' : totalScore >= 400 ? 'C' : 'D';
+            const gColor = totalScore >= 900 ? '#ffd700' : totalScore >= 750 ? '#8cffb1' : totalScore >= 600 ? '#7de8ff' : totalScore >= 400 ? '#ffb36b' : '#ff5050';
+
+            const handleContinue = () => {
+                setExiting(true);
+                setTimeout(() => {
+                    setExiting(false);
+                    setShowLeaderboard(true);
+                }, 400);
+            };
+
+            const roleColor = { proto: '#ffb36b', model: '#7de8ff', code: '#c58fff' };
+            const gradeColor = s => s === 'S' ? '#ffd700' : s === 'A' ? '#8cffb1' : s === 'B' ? '#7de8ff' : '#ffb36b';
+
+            const playerEntry = { rank: '?', name: 'Вы', team: 'Ваша команда', score: totalScore, grade, role: 'proto' };
+            const allEntries = [...LEADERBOARD_DATA, playerEntry].sort((a, b) => b.score - a.score).map((e, i) => ({ ...e, rank: i + 1 }));
+
+            /* ─────────────── LEADERBOARD SCREEN ─────────────── */
+            if (showLeaderboard) return (
+                <div style={{
+                    height: '100vh', overflowY: 'scroll', overflowX: 'hidden',
+                    scrollSnapType: 'y mandatory',
+                    scrollBehavior: 'smooth',
+                    color: '#e2e8f0', fontFamily: "'IBM Plex Mono', monospace",
+                    opacity: exiting ? 0 : 1, transition: 'opacity 0.4s ease'
+                }}>
+                    <style>{`
+                        @keyframes victoryPulse { 0%,100% { text-shadow: 0 0 30px rgba(212,160,106,0.8), 0 2px 8px rgba(0,0,0,0.9); } 50% { text-shadow: 0 0 60px rgba(212,160,106,1), 0 0 100px rgba(212,160,106,0.3), 0 2px 8px rgba(0,0,0,0.9); } }
+                        @keyframes arrowBounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(8px); } }
+                        @keyframes lbFadeUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+                        .lb-row-in { animation: lbFadeUp 0.5s ease forwards; opacity: 0; }
+                    `}</style>
+
+                    {/* ── SECTION 1: VICTORY ── */}
+                    <div style={{
+                        height: '100vh', flexShrink: 0,
+                        scrollSnapAlign: 'start',
+                        position: 'relative', display: 'flex', flexDirection: 'column',
+                        overflow: 'hidden',
+                        backgroundImage: 'url(/india_victory_bg.png)',
+                        backgroundSize: 'cover', backgroundPosition: 'center'
+                    }}>
+                        {/* Dark overlay */}
+                        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(5,10,20,0.62) 0%, rgba(5,10,20,0.82) 60%, rgba(5,10,20,0.97) 100%)', zIndex: 1 }} />
+                        {/* Scanlines */}
+                        <div style={{ position: 'absolute', inset: 0, background: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.06) 3px, rgba(0,0,0,0.06) 4px)', pointerEvents: 'none', zIndex: 2 }} />
+
+                        {/* Header */}
+                        <header style={{ padding: '24px 40px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', zIndex: 5, flexShrink: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ width: '28px', height: '28px', borderRadius: '5px', background: 'rgba(212,160,106,0.18)', border: '1px solid rgba(212,160,106,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <svg viewBox="0 0 32 32" style={{ width: '18px', height: '18px' }}>
+                                        <polygon points="16,3 29,10 29,22 16,29 3,22 3,10" fill="none" stroke="#d4a06a" strokeWidth="2" />
+                                        <circle cx="16" cy="16" r="4" fill="#d4a06a" />
+                                    </svg>
+                                </div>
+                                <span style={{ fontSize: '10px', fontWeight: '800', letterSpacing: '0.25em', color: 'rgba(212,160,106,0.85)' }}>TECHNOLAND · МИССИЯ ВЫПОЛНЕНА</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: '5px' }}>
+                                {[0,1,2,3,4].map(i => <div key={i} style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#d4a06a', boxShadow: '0 0 6px rgba(212,160,106,0.9)' }} />)}
+                            </div>
+                        </header>
+
+                        {/* Center text */}
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative', zIndex: 5, padding: '0 40px', textAlign: 'center' }}>
+                            <div style={{ fontSize: '11px', letterSpacing: '0.4em', color: '#d4a06a', fontWeight: '800', marginBottom: '16px' }}>
+                                — ПРАКРИТИ · ПРОТОКОЛ ЗАВЕРШЁН —
+                            </div>
+                            <h1 style={{
+                                fontSize: 'clamp(26px, 4vw, 46px)', fontWeight: '900', color: '#ffffff',
+                                letterSpacing: '0.5px', marginBottom: '12px', maxWidth: '720px', lineHeight: '1.2',
+                                fontFamily: "'Orbitron', sans-serif",
+                                animation: 'victoryPulse 3s ease-in-out infinite',
+                                textShadow: '0 0 30px rgba(212,160,106,0.8), 0 2px 8px rgba(0,0,0,0.9)'
+                            }}>
+                                🌿 ВЫ ВОССТАНОВИЛИ<br />ПОРЯДОК В ИНДИИ
+                            </h1>
+                            <div style={{ width: '60px', height: '2px', background: 'linear-gradient(90deg, transparent, #d4a06a, transparent)', margin: '16px auto' }} />
+                            <p style={{ fontSize: '14px', color: 'rgba(226,232,240,0.72)', maxWidth: '560px', lineHeight: '1.85', fontFamily: "'Inter', sans-serif" }}>
+                                Ваш манипулятор «Пракрити» заработал в хабе Бангалора. Священные воды Ганга больше не под угрозой. Одна из пяти стихий Панчамахабхута обрела гармонию — благодаря вам.
+                            </p>
+                            <div style={{ marginTop: '18px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', width: '100%', maxWidth: '400px' }}>
+                                {[
+                                    { val: totalScore, label: 'ОЧКОВ', color: '#d4a06a' },
+                                    { val: grade, label: 'РАНГ', color: gradeColor(grade) },
+                                    { val: '✓', label: 'МИССИЯ', color: '#8cffb1' }
+                                ].map((s, i) => (
+                                    <div key={i} style={{ background: 'rgba(6,12,24,0.6)', border: '1px solid rgba(212,160,106,0.2)', borderRadius: '10px', padding: '12px 8px', backdropFilter: 'blur(12px)', textAlign: 'center' }}>
+                                        <div style={{ fontSize: '22px', fontWeight: '900', color: s.color, fontFamily: "'Orbitron', sans-serif" }}>{s.val}</div>
+                                        <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.2em', marginTop: '4px' }}>{s.label}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Scroll arrow */}
+                        <div style={{ position: 'absolute', bottom: '28px', left: 0, right: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 5, gap: '8px' }}>
+                            <span style={{ fontSize: '10px', letterSpacing: '0.25em', color: 'rgba(212,160,106,0.65)', fontWeight: '700' }}>ТАБЛИЦА ЛИДЕРОВ</span>
+                            <div style={{ animation: 'arrowBounce 1.5s ease-in-out infinite', cursor: 'pointer' }} onClick={() => document.getElementById('lb-section').scrollIntoView({ behavior: 'smooth' })}>
+                                <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                                    <circle cx="14" cy="14" r="13" stroke="rgba(212,160,106,0.5)" strokeWidth="1.5" />
+                                    <path d="M9 12l5 5 5-5" stroke="#d4a06a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* ── SECTION 2: LEADERBOARD ── */}
+                    <div id="lb-section" style={{
+                        minHeight: '100vh', flexShrink: 0,
+                        scrollSnapAlign: 'start',
+                        background: 'radial-gradient(ellipse at 50% 0%, #1e3a5f 0%, #050a14 70%)',
+                        display: 'flex', flexDirection: 'column',
+                        position: 'relative', overflow: 'hidden'
+                    }}>
+                        {/* Glow */}
+                        <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: '600px', height: '300px', background: 'radial-gradient(ellipse, rgba(212,160,106,0.12) 0%, transparent 70%)', pointerEvents: 'none', zIndex: 1 }} />
+                        <div style={{ position: 'absolute', inset: 0, background: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.04) 3px, rgba(0,0,0,0.04) 4px)', pointerEvents: 'none', zIndex: 2 }} />
+
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 40px 30px', position: 'relative', zIndex: 5 }}>
+                            <div style={{ fontSize: '10px', letterSpacing: '0.35em', color: '#d4a06a', fontWeight: '800', marginBottom: '6px' }}>— РЕЙТИНГ УЧАСТНИКОВ —</div>
+                            <h2 style={{ fontSize: '22px', fontWeight: '900', color: '#fff', letterSpacing: '1px', marginBottom: '20px', fontFamily: "'Orbitron', sans-serif" }}>🏆 ТАБЛИЦА ЛИДЕРОВ</h2>
+
+                            {/* Table */}
+                            <div style={{ width: '100%', maxWidth: '640px', background: 'rgba(6,12,24,0.75)', border: '1px solid rgba(212,160,106,0.2)', borderRadius: '16px', overflow: 'hidden', backdropFilter: 'blur(16px)' }}>
+                                {/* Head */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '44px 1fr 100px 64px', padding: '10px 20px', background: 'rgba(212,160,106,0.07)', borderBottom: '1px solid rgba(212,160,106,0.15)', fontSize: '9px', fontWeight: '800', letterSpacing: '0.2em', color: 'rgba(212,160,106,0.7)' }}>
+                                    <span>#</span><span>КОМАНДА</span><span style={{ textAlign: 'right' }}>ОЧКИ</span><span style={{ textAlign: 'center' }}>РАНГ</span>
+                                </div>
+                                {/* Rows */}
+                                {allEntries.map((entry, idx) => {
+                                    const isPlayer = entry.name === 'Вы';
+                                    const medalEmoji = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : null;
+                                    return (
+                                        <div key={idx} className="lb-row-in" style={{
+                                            display: 'grid', gridTemplateColumns: '44px 1fr 100px 64px',
+                                            padding: '13px 20px',
+                                            background: isPlayer ? 'rgba(212,160,106,0.09)' : idx % 2 === 0 ? 'rgba(255,255,255,0.012)' : 'transparent',
+                                            borderBottom: idx < allEntries.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+                                            borderLeft: isPlayer ? '3px solid #d4a06a' : '3px solid transparent',
+                                            animationDelay: `${idx * 0.08}s`
+                                        }}>
+                                            <div style={{ fontSize: '16px', display: 'flex', alignItems: 'center' }}>
+                                                {medalEmoji || <span style={{ fontSize: '12px', fontWeight: '900', color: 'rgba(255,255,255,0.3)' }}>{entry.rank}</span>}
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', justifyContent: 'center' }}>
+                                                <span style={{ fontSize: '13px', fontWeight: '700', color: isPlayer ? '#d4a06a' : '#e2e8f0' }}>{isPlayer ? '★ ' : ''}{entry.team}</span>
+                                                <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)' }}>{entry.name}</span>
+                                            </div>
+                                            <div style={{ textAlign: 'right', fontSize: '15px', fontWeight: '900', color: isPlayer ? '#d4a06a' : '#fff', alignSelf: 'center' }}>{entry.score}</div>
+                                            <div style={{ textAlign: 'center', alignSelf: 'center' }}>
+                                                <span style={{ fontSize: '16px', fontWeight: '900', color: gradeColor(entry.grade), fontFamily: "'Orbitron', sans-serif", textShadow: `0 0 10px ${gradeColor(entry.grade)}88` }}>{entry.grade}</span>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {/* Action */}
+                            <button
+                                onClick={() => { localStorage.removeItem('tehnoland_sim_state'); localStorage.removeItem('tehnoland_visual_sync'); window.location.reload(); }}
+                                style={{
+                                    marginTop: '20px', padding: '13px 40px', borderRadius: '10px', fontSize: '12px', fontWeight: '800',
+                                    letterSpacing: '0.2em', cursor: 'pointer', border: '1px solid rgba(212,160,106,0.5)',
+                                    background: 'rgba(212,160,106,0.12)', color: '#d4a06a',
+                                    fontFamily: "'IBM Plex Mono', monospace", transition: 'all 0.2s'
+                                }}
+                            >
+                                [ НОВАЯ ИГРА ]
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+
+            /* ─────────────── RESULTS SCREEN ─────────────── */
+            return (
+                <div style={{
+                    height: '100vh', overflow: 'hidden',
+                    background: 'radial-gradient(ellipse at 50% 0%, #0d1a2e 0%, #050a14 70%)',
+                    color: '#e2e8f0', fontFamily: "'IBM Plex Mono', monospace",
+                    display: 'flex', flexDirection: 'column', position: 'relative',
+                    opacity: exiting ? 0 : 1, transition: 'opacity 0.4s ease'
+                }}>
+                    <style>{`
+                        @keyframes lbSlideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+                        @keyframes lbRotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+                        .lb-in { animation: lbSlideUp 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; opacity: 0; }
+                    `}</style>
+
+                    {/* Scanlines */}
+                    <div style={{ position: 'absolute', inset: 0, background: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.04) 3px, rgba(0,0,0,0.04) 4px)', pointerEvents: 'none', zIndex: 10 }} />
+                    {/* Glow */}
+                    <div style={{ position: 'absolute', top: '-60px', left: '50%', transform: 'translateX(-50%)', width: '700px', height: '350px', background: `radial-gradient(ellipse, ${gColor}14 0%, transparent 70%)`, pointerEvents: 'none' }} />
+
+                    {/* Header bar */}
+                    <header style={{ padding: '20px 40px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'relative', zIndex: 2, flexShrink: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <div style={{ width: '28px', height: '28px', borderRadius: '5px', background: 'rgba(212,160,106,0.15)', border: '1px solid rgba(212,160,106,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <svg viewBox="0 0 32 32" style={{ width: '18px', height: '18px' }}>
+                                    <polygon points="16,3 29,10 29,22 16,29 3,22 3,10" fill="none" stroke="#d4a06a" strokeWidth="2" />
+                                    <circle cx="16" cy="16" r="4" fill="#d4a06a" />
+                                </svg>
+                            </div>
+                            <span style={{ fontSize: '10px', fontWeight: '800', letterSpacing: '0.25em', color: 'rgba(212,160,106,0.7)' }}>TECHNOLAND · ПРОТОКОЛ ВЫПУСКА</span>
+                        </div>
+                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', letterSpacing: '0.15em' }}>PRAKRITI v1.0</div>
+                    </header>
+
+                    {/* Main content */}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '12px 40px 20px', position: 'relative', zIndex: 2 }}>
+
+                        {/* Title */}
+                        <div className="lb-in" style={{ textAlign: 'center', marginBottom: '20px', animationDelay: '0s' }}>
+                            <div style={{ fontSize: '10px', letterSpacing: '0.35em', color: '#d4a06a', fontWeight: '800', marginBottom: '6px' }}>— ПРОТОКОЛ ЗАВЕРШЁН —</div>
+                            <h1 style={{ fontSize: '42px', fontWeight: '900', color: '#fff', letterSpacing: '0.5px', margin: 0, fontFamily: "'Orbitron', sans-serif" }}>
+                                {totalScore >= 600 ? '🏆 ПРОЕКТ ПРИНЯТ В СЕРИЮ' : '⚠️ ТРЕБУЕТСЯ ДОРАБОТКА'}
+                            </h1>
+                            <p style={{ fontSize: '12px', color: 'rgba(226,232,240,0.5)', marginTop: '6px' }}>
+                                {totalScore >= 600 ? 'Манипулятор функционален и экономически оправдан.' : 'Проект имеет критические недостатки.'}
+                            </p>
+                        </div>
+
+                        {/* 3-column grid */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr 340px', gap: '20px', width: '100%', maxWidth: '1280px', alignItems: 'stretch' }}>
+
+                            {/* Grade card */}
+                            <div className="lb-in" style={{ animationDelay: '0.15s', background: 'rgba(6,12,24,0.7)', border: `1px solid ${gColor}28`, borderRadius: '14px', padding: '24px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(12px)' }}>
+                                <div style={{ fontSize: '9px', letterSpacing: '0.2em', color: 'rgba(255,255,255,0.35)', marginBottom: '14px' }}>ИТОГОВЫЙ РЕЙТИНГ</div>
+                                <div style={{ position: 'relative', width: '140px', height: '140px', marginBottom: '14px' }}>
+                                    <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: `1px solid ${gColor}25` }} />
+                                    <div style={{ position: 'absolute', inset: -4, borderRadius: '50%', border: `1px dashed ${gColor}38`, animation: 'lbRotate 20s linear infinite' }} />
+                                    <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: `radial-gradient(circle, ${gColor}0f 0%, transparent 70%)` }} />
+                                    <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '84px', fontWeight: '900', color: gColor, textShadow: `0 0 40px ${gColor}88`, fontFamily: "'Orbitron', sans-serif" }}>{grade}</div>
+                                </div>
+                                <div style={{ fontSize: '20px', fontWeight: '900', color: '#fff' }}>{totalScore}</div>
+                                <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>из 1000 очков</div>
+                            </div>
+
+                            {/* Middle: stats */}
+                            <div className="lb-in" style={{ animationDelay: '0.25s', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                {/* Score breakdown */}
+                                <div style={{ background: 'rgba(6,12,24,0.7)', border: '1px solid rgba(212,160,106,0.15)', borderRadius: '14px', padding: '16px 20px', backdropFilter: 'blur(12px)', flex: 1 }}>
+                                    <div style={{ fontSize: '9px', letterSpacing: '0.2em', color: '#d4a06a', marginBottom: '14px', fontWeight: '800' }}>СТРУКТУРА ОЧКОВ</div>
+                                    {[
+                                        { label: 'ИНЖЕНЕРИЯ', val: result.engineering, max: 400, color: '#7de8ff' },
+                                        { label: 'СБОРКА', val: result.completion, max: 600, color: '#8cffb1' },
+                                        { label: 'ИНВЕСТОРЫ', val: Math.round(result.trust || 0), max: 100, color: '#ffb36b' }
+                                    ].map(item => (
+                                        <div key={item.label} style={{ marginBottom: '10px' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', marginBottom: '5px' }}>
+                                                <span style={{ color: 'rgba(255,255,255,0.55)', fontWeight: '600' }}>{item.label}</span>
+                                                <span style={{ color: item.color, fontWeight: '800' }}>{item.val} / {item.max}</span>
+                                            </div>
+                                            <div style={{ height: '4px', background: 'rgba(255,255,255,0.06)', borderRadius: '2px', overflow: 'hidden' }}>
+                                                <div style={{ height: '100%', width: `${Math.min(100, (item.val / item.max) * 100)}%`, background: `linear-gradient(90deg, ${item.color}88, ${item.color})`, borderRadius: '2px' }} />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Specs grid */}
+                                <div style={{ background: 'rgba(6,12,24,0.7)', border: '1px solid rgba(212,160,106,0.15)', borderRadius: '14px', padding: '16px 20px', backdropFilter: 'blur(12px)' }}>
+                                    <div style={{ fontSize: '9px', letterSpacing: '0.2em', color: '#d4a06a', marginBottom: '12px', fontWeight: '800' }}>СПЕЦИФИКАЦИИ</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                        {[
+                                            { label: 'BOM', val: `$${Math.round(result.metrics.bom)}`, icon: '💰' },
+                                            { label: 'НАДЁЖНОСТЬ', val: `${Math.round(result.metrics.reliability)}%`, icon: '💎' },
+                                            { label: 'ЦИКЛ', val: `${result.metrics.cycle?.toFixed(1)}с`, icon: '⚡' },
+                                            { label: 'ТЯГА', val: `${result.metrics.payload?.toFixed(2)}кг`, icon: '⚖️' }
+                                        ].map(s => (
+                                            <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.03)', padding: '8px 10px', borderRadius: '8px' }}>
+                                                <span style={{ fontSize: '16px' }}>{s.icon}</span>
+                                                <div>
+                                                    <div style={{ fontSize: '8px', color: 'rgba(255,255,255,0.3)', letterSpacing: '0.15em' }}>{s.label}</div>
+                                                    <div style={{ fontSize: '13px', fontWeight: '800', color: '#fff' }}>{s.val}</div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Continue button */}
+                                <button
+                                    onClick={handleContinue}
+                                    style={{
+                                        padding: '14px', borderRadius: '10px', fontSize: '12px', fontWeight: '800',
+                                        letterSpacing: '0.25em', cursor: 'pointer',
+                                        border: '1px solid rgba(212,160,106,0.6)',
+                                        background: 'rgba(212,160,106,0.12)', color: '#d4a06a',
+                                        fontFamily: "'IBM Plex Mono', monospace",
+                                        transition: 'all 0.2s', width: '100%'
+                                    }}
+                                >
+                                    ПРОДОЛЖИТЬ →
+                                </button>
+                            </div>
+
+                            {/* Right: cleanup animation */}
+                            <div className="lb-in" style={{ animationDelay: '0.35s', borderRadius: '14px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.06)', minHeight: '280px' }}>
+                                <CleanupAnimation />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // [MODULE_INJECTION_MARKER]
+    </script>
+</body>
+
+</html>
